@@ -27,8 +27,10 @@ async function main() {
   console.log("InterestDistribution deployed to:", await interestDistribution.getAddress());
 
   // Transfer ownership of CSI300Token to InterestDistribution contract
-  await csi300Token.transferOwnership(await interestDistribution.getAddress());
-  console.log("Transferred ownership of CSI300Token to InterestDistribution");
+  console.log("Transferring ownership of CSI300Token to InterestDistribution...");
+  const tx = await csi300Token.transferOwnership(await interestDistribution.getAddress());
+  await tx.wait(); // Wait for the transaction to be mined
+  console.log("Ownership transferred successfully.");
 
   // Mint some USDT to the InterestDistribution contract for distribution
   await usdt.mint(await interestDistribution.getAddress(), ethers.parseEther("10000")); // 10,000 USDT

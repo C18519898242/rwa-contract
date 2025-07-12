@@ -74,14 +74,11 @@ describe("InterestDistribution", function () {
     });
 
     it("Should prevent users from claiming interest twice", async function () {
-        const { interestDistribution } = await loadFixture(deployContractsFixture);
+        const { interestDistribution, user1 } = await loadFixture(deployContractsFixture);
         await interestDistribution.setTotalInterest(ethers.parseEther("1000"));
         
-        const signers = await ethers.getSigners();
-        const user1 = signers[1];
-
         await interestDistribution.connect(user1).claimInterest();
-        await expect(interestDistribution.connect(user1).claimInterest()).to.be.revertedWith("Interest already claimed");
+        await expect(interestDistribution.connect(user1).claimInterest()).to.be.revertedWith("Interest already claimed for this period");
     });
 
     it("Should prevent non-token-holders from claiming interest", async function () {

@@ -53,6 +53,12 @@ describe("Sepolia Deployed Contracts Interaction", function () {
     this.timeout(120000);
     const newInterestAmount = ethers.parseUnits("100", 18); // 100 USDT
 
+    // Ensure the contract has enough USDT for the new interest amount
+    console.log(`Minting ${ethers.formatEther(newInterestAmount)} USDT to the InterestDistribution contract...`);
+    const mintTx = await usdt.connect(deployer).mint(await interestDistribution.getAddress(), newInterestAmount);
+    await mintTx.wait();
+    console.log("Minting confirmed.");
+
     console.log("Setting new total interest...");
     const tx = await interestDistribution.connect(deployer).setTotalInterest(newInterestAmount);
     console.log("Transaction sent, waiting for confirmation...", tx.hash);
@@ -95,7 +101,7 @@ describe("Sepolia Deployed Contracts Interaction", function () {
 
   it("Should prevent a user from claiming interest twice in the same period", async function () {
     this.timeout(120000);
-    await expect(interestDistribution.connect(deployer).claimInterest()).to.be.revertedWith("Interest already claimed");
+    await expect(interestDistribution.connect(deployer).claimInterest()).to.be.revertedWith("Interest already claimed for this period");
     console.log("Successfully prevented double-claiming.");
   });
 });
