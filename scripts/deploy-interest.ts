@@ -1,8 +1,9 @@
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
+import fs from "fs";
+import path from "path";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-
   console.log("Deploying contracts with the account:", deployer.address);
 
   // Deploy MockUSDT
@@ -32,6 +33,21 @@ async function main() {
   // Mint some USDT to the InterestDistribution contract for distribution
   await usdt.mint(await interestDistribution.getAddress(), ethers.parseEther("10000")); // 10,000 USDT
   console.log("Minted 10,000 USDT to InterestDistribution contract");
+
+  // Save deployment information if on Sepolia
+  if (network.name === "sepolia") {
+    const deploymentInfo = {
+      deployerAccount: deployer.address,
+      mockUSDT: await usdt.getAddress(),
+      mockOracle: await oracle.getAddress(),
+      csi300Token: await csi300Token.getAddress(),
+      interestDistribution: await interestDistribution.getAddress(),
+    };
+
+    const filePath = path.join(__dirname, "../test/sepolia-deployment.json");
+    fs.writeFileSync(filePath, JSON.stringify(deploymentInfo, null, 2));
+    console.log(`Deployment info saved to ${filePath}`);
+  }
 }
 
 main().catch((error) => {
