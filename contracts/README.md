@@ -89,6 +89,40 @@
 
 ---
 
+## 测试指南
+
+### 1. 标准本地测试
+
+这是最快捷的测试方式，它会使用 Hardhat 内置的、临时的测试环境。
+
+```bash
+npx hardhat test
+```
+此命令会自动编译合约并运行 `test/` 目录下的所有测试脚本。
+
+### 2. 连接到本地节点进行测试
+
+这种方式可以模拟更真实的网络交互，允许您在测试运行期间观察节点日志。
+
+- **第一步：启动本地节点**
+  在终端中运行：
+  ```bash
+  npx hardhat node
+  ```
+  此命令会启动一个本地的以太坊节点，并列出一些可用的测试账户。
+
+- **第二步：运行测试**
+  在**另一个**新的终端窗口中，运行以下命令，将测试指向您刚刚启动的本地节点：
+  ```bash
+  npx hardhat test --network localhost
+  ```
+  您也可以指定单个测试文件：
+  ```bash
+  npx hardhat test test/InterestDistribution.ts --network localhost
+  ```
+
+---
+
 ## 使用 Web3j 与合约交互
 
 [Web3j](https://github.com/web3j/web3j) 是一个用于与以太坊区块链交互的轻量级、响应式的 Java 和 Android 库。
