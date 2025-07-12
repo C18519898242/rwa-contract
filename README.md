@@ -125,11 +125,173 @@ npx hardhat test
 
 ## 客户端交互示例
 
-### 使用 Web3.js
+### 使用 Web3.py (Python)
+
+[Web3.py](https://web3py.readthedocs.io/) 是一个用于与以太坊交互的 Python 库。
+
+**前置要求**:
+- 安装 `web3`: `pip install web3`
+- 编译合约以获取 ABI: `npx hardhat compile`
+
+**示例代码 (`interact.py`)**:
+```python
+import json
+from web3 import Web3
+
+# --- 配置 ---
+RPC_URL = 'YOUR_SEPOLIA_RPC_URL' # 或 'http://127.0.0.1:8545' 用于本地节点
+PRIVATE_KEY = 'YOUR_PRIVATE_KEY'
+
+with open('./test/sepolia-deployment.json', 'r') as f:
+    deployment_info = json.load(f)
+contract_address = deployment_info['interestDistribution']
+
+with open('./artifacts/contracts/InterestDistribution.sol/InterestDistribution.json', 'r') as f:
+    abi = json.load(f)['abi']
+
+# --- 初始化 ---
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+account = w3.eth.account.from_key(PRIVATE_KEY)
+contract = w3.eth.contract(address=contract_address, abi=abi)
+
+def main():
+    print(f"与合约 {contract_address} 交互...")
+    print(f"使用账户: {account.address}")
+
+    # 1. 调用只读方法
+    snapshot_id = contract.functions.currentSnapshotId().call()
+    print(f"当前快照 ID: {snapshot_id}")
+
+    # 2. 调用交易方法
+    try:
+        print("尝试领取利息...")
+        tx = contract.functions.claimInterest().build_transaction({
+            'from': account.address,
+            'nonce': w3.eth.get_transaction_count(account.address),
+            'gas': 300000,
+            'gasPrice': w3.eth.gas_price
+        })
+        signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        print(f"交易已发送, Hash: {w3.to_hex(tx_hash)}")
+        
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        print("交易成功!", receipt)
+    except Exception as e:
+        print(f"交易失败: {e}")
+
+if __name__ == '__main__':
+    main()
+```
+**运行脚本**:
+```bash
+python interact.py
+```
+
+### 使用 Go
+
+Go 语言通过 [go-ethereum](https://geth.ethereum.org/docs/developers/dapp-developer/native-dapps) 客户端库提供与以太坊的交互能力。
+
+**前置要求**:
+- 安装 Go 和 `go-ethereum` 库。
+- 使用 `abigen` 工具从 ABI 生成 Go 包。
+
+**1. 生成 Go 合约包装器**:
+```bash
+# 编译合约获取 ABI
+npx hardhat compile
+
+# 使用 abigen 生成 Go 文件
+abigen --abi=artifacts/contracts/InterestDistribution.sol/InterestDistribution.json --pkg=main --out=interest.go
+```
+
+**2. Go 代码交互示例 (`main.go`)**:
+```go
+package main
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"fmt"
+	"log"
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
+)
+
+func main() {
+	// --- 配置 ---
+	rpcURL := "YOUR_SEPOLIA_RPC_URL" // 或 "http://127.0.0.1:8545"
+	privateKeyHex := "YOUR_PRIVATE_KEY"
+	contractAddressHex := "YOUR_DEPLOYED_CONTRACT_ADDRESS"
+
+	// --- 初始化 ---
+	client, err := ethclient.Dial(rpcURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	publicKey := privateKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		log.Fatal("error casting public key to ECDSA")
+	}
+	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
+
+	contractAddress := common.HexToAddress(contractAddressHex)
+	instance, err := NewMain(contractAddress, client) // NewMain 是 abigen 生成的函数
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("与合约交互...")
+	fmt.Println("使用账户:", fromAddress.Hex())
+
+	// 1. 调用只读方法
+	snapshotId, err := instance.CurrentSnapshotId(nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("当前快照 ID:", snapshotId)
+
+	// 2. 调用交易方法
+	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, big.NewInt(11155111)) // 11155111 是 Sepolia 的 Chain ID
+	if err != nil {
+		log.Fatal(err)
+	}
+	auth.Nonce = nil // nil 表示自动获取
+	auth.GasLimit = uint64(300000)
+
+	fmt.Println("尝试领取利息...")
+	tx, err := instance.ClaimInterest(auth)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("交易已发送, Hash: %s\n", tx.Hash().Hex())
+
+	receipt, err := bind.WaitMined(context.Background(), client, tx)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("交易成功! 状态: %v\n", receipt.Status)
+}
+```
+**运行脚本**:
+```bash
+go run main.go interest.go
+```
+
+### 使用 Web3.js (Node.js)
 
 [Web3.js](https://web3js.org/) 是一个流行的 JavaScript 库，用于与以太坊区块链进行交互。
-
-#### 1. Node.js 环境
 
 **前置要求**:
 - 安装 `web3`: `npm install web3`
@@ -181,79 +343,6 @@ main();
 **运行脚本**:
 ```bash
 node interact.js
-```
-
-#### 2. 浏览器环境 (Web)
-
-**前置要求**:
-- 用户浏览器安装了像 MetaMask 这样的钱包插件。
-- 在 HTML 文件中引入 Web3.js (例如通过 CDN)。
-
-**示例代码 (`index.html`)**:
-```html
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Web3.js 交互示例</title>
-    <script src="https://cdn.jsdelivr.net/npm/web3@latest/dist/web3.min.js"></script>
-</head>
-<body>
-    <h1>合约交互</h1>
-    <button id="connectButton">连接钱包</button>
-    <button id="claimButton" disabled>领取利息</button>
-    <p>状态: <span id="status">未连接</span></p>
-    <p>当前快照 ID: <span id="snapshotId">N/A</span></p>
-
-    <script>
-        const contractAddress = "YOUR_DEPLOYED_CONTRACT_ADDRESS"; // 从 sepolia-deployment.json 获取
-        const abi = [/* 在这里粘贴 InterestDistribution.json 中的 ABI 数组 */];
-
-        let web3;
-        let contract;
-        let userAccount;
-
-        const connectButton = document.getElementById('connectButton');
-        const claimButton = document.getElementById('claimButton');
-        const statusEl = document.getElementById('status');
-        const snapshotIdEl = document.getElementById('snapshotId');
-
-        connectButton.onclick = async () => {
-            if (typeof window.ethereum !== 'undefined') {
-                try {
-                    const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
-                    userAccount = accounts[0];
-                    web3 = new Web3(window.ethereum);
-                    contract = new web3.eth.Contract(abi, contractAddress);
-                    
-                    statusEl.textContent = `已连接: ${userAccount.substring(0, 6)}...`;
-                    connectButton.disabled = true;
-                    claimButton.disabled = false;
-
-                    // 获取并显示快照ID
-                    const snapshotId = await contract.methods.currentSnapshotId().call();
-                    snapshotIdEl.textContent = snapshotId.toString();
-
-                } catch (error) {
-                    statusEl.textContent = "连接失败: " + error.message;
-                }
-            } else {
-                statusEl.textContent = "请安装 MetaMask!";
-            }
-        };
-
-        claimButton.onclick = async () => {
-            if (!contract || !userAccount) return;
-            statusEl.textContent = "正在发送交易...";
-            try {
-                const tx = await contract.methods.claimInterest().send({ from: userAccount });
-                statusEl.textContent = `交易成功! Hash: ${tx.transactionHash}`;
-            } catch (error) {
-                statusEl.textContent = "交易失败: " + error.message;
-            }
-        };
-    </script>
-</body>
-</html>
 ```
 
 ### 使用 Web3j (Java)
