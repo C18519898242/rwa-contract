@@ -8,6 +8,7 @@ interface ICSI300Token is IERC20 {
     function snapshot() external returns (uint256);
     function balanceOfAt(address account, uint256 snapshotId) external view returns (uint256);
     function totalSupplyAt(uint256 snapshotId) external view returns (uint256);
+    function isBlacklisted(address account) external view returns (bool);
 }
 
 contract InterestDistribution is Ownable {
@@ -39,6 +40,9 @@ contract InterestDistribution is Ownable {
     }
 
     function claimInterest() external {
+        // Check blacklist status first
+        require(!csi300Token.isBlacklisted(msg.sender), "User is blacklisted");
+
         require(currentSnapshotId > 0, "Interest not set yet");
         require(!hasClaimed[currentSnapshotId][msg.sender], "Interest already claimed for this period");
 

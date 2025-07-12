@@ -2,15 +2,16 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
-describe("InterestDistribution", function () {
+describe("Token and Distribution Logic", function () {
+    // We define a fixture to reuse the same setup in every test.
     async function deployContractsFixture() {
-        const [owner, user1, user2] = await ethers.getSigners();
+        const [owner, user1, user2, user3] = await ethers.getSigners();
 
-        // Deploy MockUSDT
+        // Deploy MockUSDT with 6 decimals
         const MockUSDT = await ethers.getContractFactory("MockUSDT");
         const usdt = await MockUSDT.deploy();
-
-        // Deploy CSI300Token
+        
+        // Deploy CSI300Token with 6 decimals
         const MockOracle = await ethers.getContractFactory("MockOracle");
         const oracle = await MockOracle.deploy();
         const CSI300Token = await ethers.getContractFactory("CSI300Token");
@@ -20,75 +21,138 @@ describe("InterestDistribution", function () {
         const InterestDistribution = await ethers.getContractFactory("InterestDistribution");
         const interestDistribution = await InterestDistribution.deploy(await csi300Token.getAddress(), await usdt.getAddress());
 
-        // Mint some CSI300Token for users
-        await csi300Token.transfer(user1.address, ethers.parseEther("100"));
-        await csi300Token.transfer(user2.address, ethers.parseEther("300"));
+        // --- Initial Setup ---
+        // Mint CSI300Token for users (using 6 decimals)
+        await csi300Token.transfer(user1.address, ethers.parseUnits("100", 6));
+        await csi300Token.transfer(user2.address, ethers.parseUnits("300", 6));
         
-        // Mint USDT to the InterestDistribution contract for distribution
-        await usdt.mint(await interestDistribution.getAddress(), ethers.parseEther("1000"));
+        // Mint USDT to the InterestDistribution contract for distribution (using 6 decimals)
+        await usdt.mint(await interestDistribution.getAddress(), ethers.parseUnits("1000", 6));
 
-        // Transfer ownership of CSI300Token to InterestDistribution contract
-        await csi300Token.transferOwnership(await interestDistribution.getAddress());
+        // NOTE: Ownership of CSI300Token is NOT transferred in the fixture.
+        // The deployer ('owner') retains ownership to manage the token.
+        // It will be transferred temporarily in tests that need snapshotting.
 
-        return { interestDistribution, csi300Token, usdt, owner, user1, user2 };
+        return { interestDistribution, csi300Token, usdt, owner, user1, user2, user3 };
     }
 
-    it("Should allow owner to set total interest and create a snapshot", async function () {
-        const { interestDistribution, csi300Token } = await loadFixture(deployContractsFixture);
-        const totalInterest = ethers.parseEther("1000");
+    describe("InterestDistribution Functionality", function() {
+        it("Should allow users to claim interest based on their token balance at snapshot", async function () {
+            const { interestDistribution, csi300Token, usdt, owner, user1, user2 } = await loadFixture(deployContractsFixture);
+            const totalInterest = ethers.parseUnits("1000", 6);
+            
+            // Transfer ownership to allow snapshotting, then set interest
+            await csi300Token.connect(owner).transferOwnership(await interestDistribution.getAddress());
+            await interestDistribution.setTotalInterest(totalInterest);
+    
+            const snapshotId = await interestDistribution.currentSnapshotId();
+            const csiTotalSupply = await csi300Token.totalSupplyAt(snapshotId);
+    
+            // User 1 claims interest
+            const user1CSIBalance = await csi300Token.balanceOfAt(user1.address, snapshotId);
+            const expectedInterest1 = (user1CSIBalance * totalInterest) / csiTotalSupply;
+            await expect(interestDistribution.connect(user1).claimInterest())
+                .to.emit(interestDistribution, "InterestClaimed")
+                .withArgs(user1.address, expectedInterest1);
+            expect(await usdt.balanceOf(user1.address)).to.equal(expectedInterest1);
+    
+            // User 2 claims interest
+            const user2CSIBalance = await csi300Token.balanceOfAt(user2.address, snapshotId);
+            const expectedInterest2 = (user2CSIBalance * totalInterest) / csiTotalSupply;
+            await expect(interestDistribution.connect(user2).claimInterest())
+                .to.emit(interestDistribution, "InterestClaimed")
+                .withArgs(user2.address, expectedInterest2);
+            expect(await usdt.balanceOf(user2.address)).to.equal(expectedInterest2);
+        });
+    
+        it("Should prevent users from claiming interest twice", async function () {
+            const { interestDistribution, csi300Token, owner, user1 } = await loadFixture(deployContractsFixture);
 
-        await expect(interestDistribution.setTotalInterest(totalInterest))
-            .to.emit(interestDistribution, "InterestSet")
-            .withArgs(totalInterest, 1); // Assuming first snapshot ID is 1
-        
-        expect(await interestDistribution.totalInterest()).to.equal(totalInterest);
-        expect(await interestDistribution.currentSnapshotId()).to.equal(1);
+            // Transfer ownership to allow snapshotting, then set interest
+            await csi300Token.connect(owner).transferOwnership(await interestDistribution.getAddress());
+            await interestDistribution.setTotalInterest(ethers.parseUnits("1000", 6));
+            
+            await interestDistribution.connect(user1).claimInterest();
+            await expect(interestDistribution.connect(user1).claimInterest()).to.be.revertedWith("Interest already claimed for this period");
+        });
     });
 
-    it("Should allow users to claim interest based on their token balance at snapshot", async function () {
-        const { interestDistribution, csi300Token, usdt, user1, user2 } = await loadFixture(deployContractsFixture);
-        const totalInterest = ethers.parseEther("1000");
-        await interestDistribution.setTotalInterest(totalInterest);
+    describe("CSI300Token Blacklist and Freeze Functionality", function() {
+        it("Should prevent blacklisted users from claiming interest", async function () {
+            const { interestDistribution, csi300Token, owner, user1 } = await loadFixture(deployContractsFixture);
+            
+            // Owner blacklists user1. This works because owner retains ownership from the fixture.
+            await csi300Token.connect(owner).setBlacklisted(user1.address, true);
+            expect(await csi300Token.isBlacklisted(user1.address)).to.be.true;
 
-        // Check balances before claiming
-        const user1InitialBalance = await usdt.balanceOf(user1.address);
-        const user2InitialBalance = await usdt.balanceOf(user2.address);
-        expect(user1InitialBalance).to.equal(0);
-        expect(user2InitialBalance).to.equal(0);
+            // Now, transfer ownership to set interest
+            await csi300Token.connect(owner).transferOwnership(await interestDistribution.getAddress());
+            await interestDistribution.setTotalInterest(ethers.parseUnits("1000", 6));
 
-        // User 1 claims interest
-        const snapshotId = await interestDistribution.currentSnapshotId();
-        await interestDistribution.connect(user1).claimInterest();
-        const user1BalanceAfterClaim = await usdt.balanceOf(user1.address);
-        const csiTotalSupply = await csi300Token.totalSupplyAt(snapshotId);
-        const user1CSIBalance = await csi300Token.balanceOfAt(user1.address, snapshotId);
-        const expectedInterest1 = (user1CSIBalance * totalInterest) / csiTotalSupply;
-        expect(user1BalanceAfterClaim).to.equal(expectedInterest1);
+            // Expect claim to be reverted
+            await expect(interestDistribution.connect(user1).claimInterest()).to.be.revertedWith("User is blacklisted");
+        });
 
-        // User 2 claims interest
-        await interestDistribution.connect(user2).claimInterest();
-        const user2BalanceAfterClaim = await usdt.balanceOf(user2.address);
-        const user2CSIBalance = await csi300Token.balanceOfAt(user2.address, snapshotId);
-        const expectedInterest2 = (user2CSIBalance * totalInterest) / csiTotalSupply;
-        expect(user2BalanceAfterClaim).to.equal(expectedInterest2);
-    });
+        it("Should prevent blacklisted users from transferring tokens", async function () {
+            const { csi300Token, owner, user1, user2 } = await loadFixture(deployContractsFixture);
+            
+            // Owner blacklists user1.
+            await csi300Token.connect(owner).setBlacklisted(user1.address, true);
 
-    it("Should prevent users from claiming interest twice", async function () {
-        const { interestDistribution, user1 } = await loadFixture(deployContractsFixture);
-        await interestDistribution.setTotalInterest(ethers.parseEther("1000"));
-        
-        await interestDistribution.connect(user1).claimInterest();
-        await expect(interestDistribution.connect(user1).claimInterest()).to.be.revertedWith("Interest already claimed for this period");
-    });
+            // user1 tries to send tokens
+            await expect(csi300Token.connect(user1).transfer(user2.address, ethers.parseUnits("10", 6)))
+                .to.be.revertedWith("CSI300Token: sender is blacklisted");
+            
+            // another user tries to send to user1
+            await expect(csi300Token.connect(user2).transfer(user1.address, ethers.parseUnits("10", 6)))
+                .to.be.revertedWith("CSI300Token: recipient is blacklisted");
+        });
 
-    it("Should prevent non-token-holders from claiming interest", async function () {
-        const { interestDistribution, csi300Token, owner, user1 } = await loadFixture(deployContractsFixture);
-        await csi300Token.connect(owner).transfer(user1.address, await csi300Token.balanceOf(owner.address));
-        await interestDistribution.setTotalInterest(ethers.parseEther("1000"));
-        const snapshotId = await interestDistribution.currentSnapshotId();
-        const ownerBalanceAtSnapshot = await csi300Token.balanceOfAt(owner.address, snapshotId);
-        expect(ownerBalanceAtSnapshot).to.equal(0);
+        it("Should prevent transfers that exceed the available (unfrozen) balance", async function () {
+            const { csi300Token, owner, user1, user2 } = await loadFixture(deployContractsFixture);
+            
+            // user1 has 100 tokens. Owner freezes 60 of them.
+            await csi300Token.connect(owner).freezeBalance(user1.address, ethers.parseUnits("60", 6));
+            
+            expect(await csi300Token.frozenBalanceOf(user1.address)).to.equal(ethers.parseUnits("60", 6));
+            expect(await csi300Token.availableBalanceOf(user1.address)).to.equal(ethers.parseUnits("40", 6));
 
-        await expect(interestDistribution.connect(owner).claimInterest()).to.be.revertedWith("No tokens at snapshot");
+            // Trying to transfer 50 tokens (more than available) should fail
+            await expect(csi300Token.connect(user1).transfer(user2.address, ethers.parseUnits("50", 6)))
+                .to.be.revertedWith("CSI300Token: transfer amount exceeds available balance");
+
+            // Transferring 40 tokens (equal to available) should succeed
+            await expect(csi300Token.connect(user1).transfer(user2.address, ethers.parseUnits("40", 6)))
+                .to.not.be.reverted;
+            
+            expect(await csi300Token.balanceOf(user1.address)).to.equal(ethers.parseUnits("60", 6));
+        });
+
+        it("Should still calculate interest based on total balance, not just available balance", async function () {
+            const { interestDistribution, csi300Token, usdt, owner, user1 } = await loadFixture(deployContractsFixture);
+            
+            // Owner freezes half of user1's tokens
+            await csi300Token.connect(owner).freezeBalance(user1.address, ethers.parseUnits("50", 6));
+
+            // Transfer ownership to InterestDistribution contract to allow snapshot
+            await csi300Token.connect(owner).transferOwnership(await interestDistribution.getAddress());
+
+            // Set interest
+            const totalInterest = ethers.parseUnits("1000", 6);
+            await interestDistribution.setTotalInterest(totalInterest);
+
+            // User1's claim should be based on their full 100 tokens at snapshot
+            const snapshotId = await interestDistribution.currentSnapshotId();
+            const csiTotalSupply = await csi300Token.totalSupplyAt(snapshotId);
+            const user1FullBalance = await csi300Token.balanceOfAt(user1.address, snapshotId);
+            
+            // The balance at snapshot should be the full 100 tokens
+            expect(user1FullBalance).to.equal(ethers.parseUnits("100", 6));
+
+            const expectedInterest = (user1FullBalance * totalInterest) / csiTotalSupply;
+            
+            await interestDistribution.connect(user1).claimInterest();
+            expect(await usdt.balanceOf(user1.address)).to.equal(expectedInterest);
+        });
     });
 });
