@@ -31,7 +31,7 @@
     1.  **设置总利息**: 合约所有者（管理员）调用 `setTotalInterest(amount)` 函数，并存入指定数量的 `MockUSDT` 作为本期分红的总利息池。
     2.  **创建快照**: 在 `setTotalInterest` 函数内部，会自动调用 `CSI300Token` 合约的 `snapshot()` 函数，记录当前时刻所有 `CSI300Token` 持有者的余额。
     3.  **用户领取利息**: 用户可以调用 `claimInterest()` 函数。合约会根据该用户在快照时的 `CSI300Token` 持有量，按比例计算其应得的 `MockUSDT` 利息，并将其发送给用户。
-- **防止重复领取**: 合约会记录每个地址是否已经领取过当前周期的利息，防止同一用户重复领取。
+- **防止重复领取**: 合约会记录每个地址在每个利息周期（由 `snapshotId` 标识）是否已经领取过利息，防止同一用户在同一周期重复领取。
 
 ### 3. `MockUSDT.sol`
 
@@ -50,4 +50,110 @@
 3.  `CSI300Token` 在部署时需要一个预言机地址，因此它依赖于 `MockOracle` 合约。
 4.  用户持有 `CSI300Token`，并通过与 `InterestDistribution` 合约交互来领取 `MockUSDT` 利息。
 
-  *（这是一个占位符，您可以替换为实际的关系图链接）*
+---
+
+## 部署指南
+
+### 1. 本地网络部署
+
+用于快速测试和开发。
+
+- **启动本地节点**:
+  ```bash
+  npx hardhat node
+  ```
+- **执行部署脚本**:
+  在一个新的终端窗口中，运行以下命令：
+  ```bash
+  npx hardhat run scripts/deploy-interest.ts --network localhost
+  ```
+  部署成功后，合约地址将显示在终端中。
+
+### 2. Sepolia 测试网部署
+
+用于在公共测试网上进行验证。
+
+- **配置环境变量**:
+  1.  复制 `.env.example` 文件并重命名为 `.env`。
+  2.  在 `.env` 文件中填入您的 `SEPOLIA_RPC_URL` (例如，从 Infura 或 Alchemy 获取) 和您的账户 `PRIVATE_KEY`。
+      ```
+      SEPOLIA_RPC_URL="https://sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID"
+      PRIVATE_KEY="YOUR_ACCOUNT_PRIVATE_KEY"
+      ```
+- **执行部署脚本**:
+  ```bash
+  npx hardhat run scripts/deploy-interest.ts --network sepolia
+  ```
+- **查看部署信息**:
+  部署成功后，所有合约的地址会自动保存到 `test/sepolia-deployment.json` 文件中。
+
+---
+
+## 使用 Web3j 与合约交互
+
+[Web3j](https://github.com/web3j/web3j) 是一个用于与以太坊区块链交互的轻量级、响应式的 Java 和 Android 库。
+
+### 1. 生成合约的 Java 包装器
+
+首先，您需要将 Solidity 合约编译后的 ABI 和 BIN 文件转换为 Java 代码。
+
+- **编译合约**:
+  ```bash
+  npx hardhat compile
+  ```
+  这会在 `artifacts/contracts/` 目录下生成 ABI 和 BIN 文件。
+
+- **使用 Web3j-CLI 生成包装器**:
+  下载 [Web3j-CLI](https://docs.web3j.io/latest/command_line_tools/) 工具。然后为 `InterestDistribution.sol` 生成 Java 包装器：
+  ```bash
+  web3j generate solidity -a=artifacts/contracts/InterestDistribution.sol/InterestDistribution.json -o=src/main/java -p=com.yourpackage
+  ```
+  对其他需要交互的合约（如 `CSI300Token`, `MockUSDT`）重复此操作。
+
+### 2. Java 代码交互示例
+
+以下是一个使用生成的包装器与 `InterestDistribution` 合约交互的 Java 代码片段。
+
+```java
+import org.web3j.crypto.Credentials;
+import org.web3j.protocol.Web3j;
+import org.web3j.protocol.http.HttpService;
+import org.web3j.tx.gas.DefaultGasProvider;
+import com.yourpackage.InterestDistribution; // 导入生成的包装器
+
+public class BlockchainInteraction {
+
+    public static void main(String[] args) throws Exception {
+        // 1. 连接到节点
+        Web3j web3j = Web3j.build(new HttpService("YOUR_SEPOLIA_RPC_URL"));
+
+        // 2. 加载你的账户凭证
+        String privateKey = "YOUR_PRIVATE_KEY";
+        Credentials credentials = Credentials.create(privateKey);
+
+        // 3. 加载已部署的合约
+        String contractAddress = "DEPLOYED_INTEREST_DISTRIBUTION_ADDRESS"; // 从 sepolia-deployment.json 获取
+        InterestDistribution contract = InterestDistribution.load(
+            contractAddress,
+            web3j,
+            credentials,
+            new DefaultGasProvider()
+        );
+
+        // 4. 调用合约的只读方法 (View/Pure)
+        System.out.println("Fetching current snapshot ID...");
+        BigInteger currentSnapshotId = contract.currentSnapshotId().send();
+        System.out.println("Current Snapshot ID: " + currentSnapshotId);
+
+        // 5. 调用合约的交易方法 (Transaction)
+        System.out.println("Claiming interest...");
+        TransactionReceipt receipt = contract.claimInterest().send();
+        System.out.println("Transaction successful, hash: " + receipt.getTransactionHash());
+    }
+}
+```
+
+**注意事项**:
+- 将 `YOUR_SEPOLIA_RPC_URL`, `YOUR_PRIVATE_KEY`, 和 `DEPLOYED_INTEREST_DISTRIBUTION_ADDRESS` 替换为您的实际值。
+- 确保您的 Java 项目中已经添加了 Web3j 的依赖（例如，通过 Maven 或 Gradle）。
+- 调用交易方法（如 `claimInterest`）会消耗 Gas，请确保您的账户中有足够的测试 ETH。
