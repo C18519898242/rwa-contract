@@ -20,6 +20,14 @@ async function main() {
   console.log("CSI300Token deployed to:", await token.getAddress());
   console.log("Initial supply:", await token.totalSupply());
   console.log("Current index price:", await token.getIndexPrice());
+
+  // 3. 部署MockUSDT
+  const USDT = await ethers.getContractFactory("MockUSDT");
+  const usdt = await USDT.deploy();
+  await usdt.waitForDeployment();
+
+  console.log("MockUSDT deployed to:", await usdt.getAddress());
+  console.log("USDT initial supply:", await usdt.totalSupply());
 }
 
 main().catch((error) => {
